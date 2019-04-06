@@ -124,7 +124,7 @@
                     && !preloadChannels.includes(msg.channel.id)
                     && !preloadChannels.includes(msg.author.id)) return;
 
-                var match = snitchKiraRegexp.exec(msg.content);
+                var match = snitchChatLogRegexp.exec(msg.content);
                 if (!match) return; // not a snitch alert
 
                 var [_fullmatch, group, player, action, snitch, x, y, z] = match;
