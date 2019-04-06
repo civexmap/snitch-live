@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en-US">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <!-- Use minimum-scale=1 to enable GPU rasterization -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=0, maximum-scale=1, minimum-scale=1">
+    <meta name="Description" content="Live snitches on CivEx: First Light (Beta)">
+    <title>CivExMap Live Snitches Test</title>
+    <meta property="og:type" content="object" />
+    <meta property="og:url" content="https://civexmap.github.io/snitch-live/" />
+    <meta property="og:site_name" content="CivExMap" />
+    <meta property="og:title" content="CivExMap Live Snitches" />
+    <meta property="og:description" content="Live Snitches on CivEx: First Light (Beta)" />
+    <link rel="icon" href="https://civexmap.github.io/favicon.ico" />
+</head>
+
+<body>
+    <div id="app-root">
+        Loading...
+    </div>
+    <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.1.0/leaflet.css" />
+    <link rel="stylesheet" type="text/css" href="https://ccmap.github.io/beta/style.css" />
+    <script src="https://ccmap.github.io/beta/js/bundle.js"></script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/gh/discordjs/discord.js@webpack/discord.stable.min.js"></script>
+    <script type="text/javascript">
+        var config = {
+            defaultCollectionUrls: [],
+            initialState: {
+                mapConfig: {
+                    borderApothem: 6300,
+                    tilesRoot: 'https://raw.githubusercontent.com/civexmap/tiles/master/',
+                    basemaps: {
+                        terrain: { name: 'Terrain', id: 'terrain', bgColor: '#000', isDefault: true },
+                    },
+                },
+            },
+        };
+        window.civMapApi = CivMap.start(config);
+
+        function createSnitchLiveCollection() {
+            return "civmap:collection/user"; // XXX doesn't work with current civmap version, needs implementation
+            var collectionId = "civmap:collection/snitch-live";
+            window.civMapApi.store.dispatch({
+                type: "CREATE_COLLECTION",
+                collectionId: "civmap:collection/snitch-live",
+                collection: {
+                    id: 'civmap:collection/snitch-live',
+                    name: 'Live Snitch alerts',
+                    persistent: false,
+                    presentations: {
+                        "Live Snitch Alerts": {
+                            "name": "Live Snitch Alerts",
+                            "base_style": {
+                                icon_size: 32,
+                                icon: '$image',
+                            }
+                        }
+                    },
+                }
+            });
+            return collectionId;
+        };
+
+        var latestPlayerUpdates = {}; // name -> timestamp
+
+        function handleSnitchAlert(alert) {
+            if (alert.snitch.location.world !== 'world') return; // wrong dimension
+
+            if (latestPlayerUpdates[alert.player] > alert.time) return; // old update
+            latestPlayerUpdates[alert.player] = alert.time;
+
+            console.log('Snitch alert for', alert.player);
+
+            var timestr = new Date(alert.time * 1000).toISOString().replace('T', ' ').substring(0, 19);
+            var collectionId = createSnitchLiveCollection();
+            window.civMapApi.store.dispatch({
+                type: "UPDATE_FEATURE_IN_COLLECTION",
+                collectionId: collectionId,
+                feature: {
+                    collectionId: collectionId,
+                    id: "civmap:feature/snitch-live/" + alert.player,
+                    name: alert.player,
+                    // label: `${alert.player} ${timestr.substr(11)}\nat ${alert.snitch.name}`,
+                    x: alert.snitch.location.x,
+                    z: alert.snitch.location.z,
+                    player: alert.player,
+                    snitch: alert.snitch.name,
+                    time: timestr,
+                    timestamp: alert.time,
+                    image: 'https://minotar.net/avatar/' + alert.player + '/256.png',
+                    icon: 'https://minotar.net/avatar/' + alert.player + '/32.png',
+                }
+            })
+        }
+
+        // player, action, snitch, x, y, z
+        var snitchChatLogRegexp = /\b([^ ]+) (entered|logged in to|logged out in) snitch at ([^ ]*) \[.+ ([-0-9]+) ([-0-9]+) ([-0-9]+)\]/;
+
+        var currentDiscord;
+        function connectDiscord(token, preloadChannels) {
+            if (currentDiscord) currentDiscord.destroy();
+            console.log('Connecting to Discord');
+            const discord = new Discord.Client();
+            currentDiscord = discord;
+
+            if (!preloadChannels || !preloadChannels.forEach) {
+                preloadChannels = []; // accept all
+            }
+
+            var retriesLeft = 3;
+            function retry() {
+                if (retriesLeft <= 0) {
+                    alert(`Discord connection failed three times. Disabling live snitch overlay. Reload page to re-enable.`);
+                    return;
+                }
+                retriesLeft -= 1;
+                connectDiscord(token);
+            }
+
+            function handleMessageForSnitchAlert(msg) {
+                if (preloadChannels.length > 0
+                    && !preloadChannels.includes(msg.channel.id)
+                    && !preloadChannels.includes(msg.author.id)) return;
+
+                var match = snitchKiraRegexp.exec(msg.content);
+                if (!match) return; // not a snitch alert
+
+                var [_fullmatch, group, player, action, snitch, x, y, z] = match;
+
+                handleSnitchAlert({
+                    time: msg.createdTimestamp / 1000,
+                    player: player,
+                    action: 'ENTRY', // TODO from action var
+                    snitch: {
+                        location: {
+                            x: parseInt(x),
+                            y: parseInt(y),
+                            z: parseInt(z),
+                            world: 'world',
+                        },
+                        name: snitch,
+                        group: group,
+                        type: null,
+                    },
+                });
+            }
+
+            discord.on('error', function (event) {
+                console.error('Discord error:', event);
+                retry();
+            });
+            discord.on('disconnect', function (event) {
+                console.error('Discord closed:', event);
+                retry();
+            });
+            discord.on('ready', function () {
+                console.log(`Connected to Discord as ${discord.user.tag}`);
+                retriesLeft = 3;
+
+                preloadChannels.forEach(function (channelId) {
+                    var channel = discord.channels.get(channelId);
+                    console.log('Loading last 100 msgs from', channel.name, 'in', channel.guild.name);
+                    channel.fetchMessages({ limit: 100 }).then(function (msgs) {
+                        msgs.forEach(handleMessageForSnitchAlert);
+                    }).catch(console.error);
+                });
+            });
+            discord.on('message', function (msg) {
+                handleMessageForSnitchAlert(msg);
+            });
+
+            discord.login(token);
+        }
+
+        // you can also add space-separated channel/user ids after the discord token to accept alerts only from those channels/users
+        var token = prompt("Enter Discord Token to show live snitches:");
+        if (token) {
+            var splits = token.split(' ');
+            token = splits[0];
+            if (token.length === 59) connectDiscord(token, splits.slice(1));
+        }
+        else alert('No token given. Disabling live snitch overlay.');
+    </script>
+</body>
+
+</html>
