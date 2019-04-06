@@ -127,7 +127,7 @@
                 var match = snitchChatLogRegexp.exec(msg.content);
                 if (!match) return; // not a snitch alert
 
-                var [_fullmatch, group, player, action, snitch, x, y, z] = match;
+                var [_fullmatch, player, action, snitch, x, y, z] = match;
 
                 handleSnitchAlert({
                     time: msg.createdTimestamp / 1000,
@@ -141,7 +141,7 @@
                             world: 'world',
                         },
                         name: snitch,
-                        group: group,
+                        group: '?',
                         type: null,
                     },
                 });
